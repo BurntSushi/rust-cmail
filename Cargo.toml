@@ -1,0 +1,22 @@
+[package]
+name = "cmail"
+version = "0.1.0"  #:version
+authors = ["Andrew Gallant <jamslam@gmail.com>"]
+description = "Send email with the output of long running commands."
+homepage = "https://github.com/BurntSushi/rust-cmail"
+repository = "https://github.com/BurntSushi/rust-cmail"
+readme = "README.md"
+keywords = ["email", "cli", "command"]
+license = "Unlicense/MIT"
+
+[dependencies]
+chan = "0.1"
+# chan = { version = "0.1", path = "/home/andrew/rust/chan" }
+chan-signal = "0.1"
+# chan-signal = { version = "0.1", path = "/home/andrew/rust/chan-signal" }
+docopt = "0.6"
+rustc-serialize = "0.3"
+
+[[bin]]
+name = "cmail"
+path = "cmail.rs"

@@ -1,3 +1,5 @@
+#![allow(deprecated)] // for connect->join in 1.3
+
 #[macro_use] extern crate chan;
 extern crate chan_signal;
 extern crate docopt;
@@ -164,7 +166,7 @@ struct EmailSender {
     /// In particular, the next email is not attempted until a consumer
     /// receives the corresponding result on this channel.
     recv_result: Receiver<io::Result<bool>>,
-    /// Receives a sentinel value when the email sender shuts down.
+    /// Closed when the email sender shuts down.
     recv_done: Receiver<()>,
 }
 
@@ -202,9 +204,8 @@ impl EmailSender {
                 };
                 send_result.send(result);
             }
-            // Send a sentinel so that a consumer listening on `recv_done`
-            // knows when all available lines have been sent.
-            send_done.send(());
+            // unblock recv_done
+            drop(send_done);
         });
         EmailSender {
             send_lines: send_lines,
@@ -267,7 +268,7 @@ impl EmailSender {
         // Shut down the thread responsible for sending emails.
         drop(self.send_lines);
         // Wait for it to finished.
-        self.recv_done.recv().unwrap();
+        self.recv_done.recv();
     }
 }
 

@@ -359,9 +359,9 @@ impl Passthru {
     /// If there's no pass through, then a /dev/null-like writer is returned.
     fn wtr(self) -> Box<io::Write> {
         match self {
-            Passthru::No => Box::new(io::sink()) as Box<io::Write>,
-            Passthru::Stdout => Box::new(io::stdout()) as Box<io::Write>,
-            Passthru::Stderr => Box::new(io::stderr()) as Box<io::Write>,
+            Passthru::No => Box::new(io::sink()),
+            Passthru::Stdout => Box::new(io::stdout()),
+            Passthru::Stderr => Box::new(io::stderr()),
         }
     }
 

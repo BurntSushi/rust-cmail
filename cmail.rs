@@ -23,7 +23,7 @@ Options:
     -p ARG, --period ARG   Data is emailed at this period in seconds.
                            Set to 0 to disable and send only one email
                            when the command completes.
-                           [default: 3]
+                           [default: 900]
     -s, --silent           Don't pass the command's stdout/stderr to the
                            terminal. Instead, only send stdout/stderr
                            in email.

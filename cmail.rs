@@ -1,9 +1,10 @@
-#![allow(deprecated)] // for connect->join in 1.3
-
-#[macro_use] extern crate chan;
+#[macro_use]
+extern crate chan;
 extern crate chan_signal;
 extern crate docopt;
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
 use std::env;
 use std::error::Error;
@@ -34,7 +35,7 @@ Options:
                            are set, then an error is returned.
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_args: Vec<String>,
     flag_period: u32,
@@ -50,7 +51,7 @@ fn main() {
     // We must start our signal notifier before spawning any threads!
     let signal = notify(&[Signal::INT, Signal::TERM]);
     let args: Args = Docopt::new(USAGE)
-                            .and_then(|d| d.options_first(true).decode())
+                            .and_then(|d| d.options_first(true).deserialize())
                             .unwrap_or_else(|e| e.exit());
     match run(&args, signal) {
         Ok(code) => process::exit(code),
@@ -80,7 +81,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
         } else {
             let (cmd, lines) = try!(Cmd::run(&args.arg_args,
                                              !args.flag_silent));
-            (Some(cmd), lines, args.arg_args.connect(" "))
+            (Some(cmd), lines, args.arg_args.join(" "))
         };
 
     let email = match args.flag_to {
@@ -290,7 +291,7 @@ impl Cmd {
     fn run(cmd: &[String], passthru: bool)
           -> Result<(Cmd, Receiver<io::Result<String>>)> {
         let mut command = Command::new("sh");
-        command.arg("-c").arg(cmd.connect(" "))
+        command.arg("-c").arg(cmd.join(" "))
                .stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = try!(command.spawn());
 

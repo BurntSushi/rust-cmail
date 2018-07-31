@@ -12,7 +12,7 @@ license = "Unlicense/MIT"
 [dependencies]
 chan = "0.1"
 chan-signal = "0.1"
-docopt = "0.8"
+docopt = "1"
 serde = "1"
 serde_derive = "1"
 

@@ -51,8 +51,8 @@ fn main() {
     // We must start our signal notifier before spawning any threads!
     let signal = notify(&[Signal::INT, Signal::TERM]);
     let args: Args = Docopt::new(USAGE)
-                            .and_then(|d| d.options_first(true).deserialize())
-                            .unwrap_or_else(|e| e.exit());
+        .and_then(|d| d.options_first(true).deserialize())
+        .unwrap_or_else(|e| e.exit());
     match run(&args, signal) {
         Ok(code) => process::exit(code),
         Err(err) => {
@@ -79,8 +79,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
             let stdin = passthru.gobble(io::stdin());
             (None, stdin, "<stdin>".to_owned())
         } else {
-            let (cmd, lines) = try!(Cmd::run(&args.arg_args,
-                                             !args.flag_silent));
+            let (cmd, lines) = Cmd::run(&args.arg_args, !args.flag_silent)?;
             (Some(cmd), lines, args.arg_args.join(" "))
         };
 
@@ -116,7 +115,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
                     // continue reading from its stdout/stderr until EOF.
                     //
                     // (Once EOF is hit, the `lines` channel is closed.)
-                    try!(cmd.kill());
+                    cmd.kill()?;
                 } else {
                     // .. on the other hand, if we're reading from stdin,
                     // then there's really nothing else we can do other than
@@ -133,10 +132,10 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
             // Finally, don't respond to ticks if we're shutting down.
             ticker.recv() => {
                 if !killed {
-                    killed = try!(emailer.send(outlines));
+                    killed = emailer.send(outlines)?;
                     outlines = Vec::with_capacity(1024);
                     match cmd {
-                        Some(ref mut cmd) if killed => { try!(cmd.kill()); }
+                        Some(ref mut cmd) if killed => { cmd.kill()?; }
                         _ => {}
                     }
                 }
@@ -150,7 +149,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
             // operation. In the absence of ticks, this is usually the only
             // channel that gets any activity!
             lines.recv() -> line => match line {
-                Some(line) => outlines.push(try!(line)),
+                Some(line) => outlines.push(line?),
                 None => return emailer.last_send(cmd, outlines, killed),
             },
         }
@@ -236,15 +235,16 @@ impl EmailSender {
     ) -> Result<i32> {
         let int = match cmd {
             None => killed,
-            Some(mut cmd) => !try!(cmd.wait()).success() || killed,
+            Some(mut cmd) => !cmd.wait()?.success() || killed,
         };
-        let msg = if int {
-            "Program interrupted."
-        } else {
-            "Program completed successfully."
-        };
+        let msg =
+            if int {
+                "Program interrupted."
+            } else {
+                "Program completed successfully."
+            };
         lines.extend(vec!["", "", msg].into_iter().map(str::to_owned));
-        try!(self.send(lines));
+        self.send(lines)?;
         self.done();
         Ok(if killed { 1 } else { 0 })
     }
@@ -260,7 +260,7 @@ impl EmailSender {
     /// be used to start a graceful shutdown of cmail.)
     fn send(&self, lines: Vec<String>) -> Result<bool> {
         self.send_lines.send(lines);
-        Ok(try!(self.recv_result.recv().unwrap()))
+        Ok(self.recv_result.recv().unwrap()?)
     }
 
     /// Start a graceful shutdown of the emailing thread and wait for all
@@ -291,9 +291,12 @@ impl Cmd {
     fn run(cmd: &[String], passthru: bool)
           -> Result<(Cmd, Receiver<io::Result<String>>)> {
         let mut command = Command::new("sh");
-        command.arg("-c").arg(cmd.join(" "))
-               .stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = try!(command.spawn());
+        command
+            .arg("-c")
+            .arg(cmd.join(" "))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
@@ -312,7 +315,7 @@ impl Cmd {
 
     /// Block until the child is reaped.
     fn wait(&mut self) -> Result<process::ExitStatus> {
-        Ok(try!(self.child.wait()))
+        Ok(self.child.wait()?)
     }
 }
 
@@ -419,8 +422,10 @@ fn email_lines_retry(
 
 /// Sends an email containing `lines` to `email` for the command `cmd`.
 fn email_lines(cmd: &str, email: &str, lines: &[String]) -> io::Result<()> {
-    let mut child = try!(Command::new("sendmail").arg("-t")
-                                 .stdin(Stdio::piped()).spawn());
+    let mut child = Command::new("sendmail")
+        .arg("-t")
+        .stdin(Stdio::piped())
+        .spawn()?;
     let subject: String = cmd.chars().take(50).collect();
     let sep: String = ::std::iter::repeat('-').take(79).collect();
     {
@@ -428,18 +433,18 @@ fn email_lines(cmd: &str, email: &str, lines: &[String]) -> io::Result<()> {
         // We need to drop this borrow before calling `child.wait()`, which
         // also borrows `child` mutably.
         let mut buf = io::BufWriter::new(child.stdin.as_mut().unwrap());
-        try!(writeln!(&mut buf, "\
+        writeln!(&mut buf, "\
 Subject: [cmail] {subject}
 From: {email}
 To: {email}
-", subject=subject, email=email));
+", subject=subject, email=email)?;
         // Add some extra fluff to make it clear what command is being run.
-        try!(writeln!(&mut buf, "{sep}\n{cmd}\n{sep}", sep=sep, cmd=cmd));
+        writeln!(&mut buf, "{sep}\n{cmd}\n{sep}", sep=sep, cmd=cmd)?;
         for line in lines {
-            try!(writeln!(&mut buf, "{}", line));
+            writeln!(&mut buf, "{}", line)?;
         }
     }
-    let status = try!(child.wait());
+    let status = child.wait()?;
     if status.success() {
         Ok(())
     } else {
@@ -451,10 +456,15 @@ To: {email}
         // We use this information to retry the email send (but are careful
         // to only retry once).
         Err(match status.code() {
-            None => io::Error::new(io::ErrorKind::Interrupted,
-                                   "email send interrupted"),
-            Some(_) => io::Error::new(io::ErrorKind::Other,
-                                      status.to_string()),
+            None => {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "email send interrupted",
+                )
+            }
+            Some(_) => {
+                io::Error::new(io::ErrorKind::Other, status.to_string())
+            }
         })
     }
 }

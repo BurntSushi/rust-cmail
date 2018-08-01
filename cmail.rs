@@ -1,20 +1,22 @@
 #[macro_use]
-extern crate chan;
-extern crate chan_signal;
+extern crate crossbeam_channel as channel;
 extern crate docopt;
+extern crate libc;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate signal_hook;
 
 use std::env;
 use std::error::Error;
 use std::io::{self, BufRead, Read, Write};
 use std::process::{self, Command, Stdio};
 use std::thread;
+use std::time::Duration;
 
-use chan::{Receiver, Sender};
-use chan_signal::{Signal, notify};
+use channel::{Receiver, Sender};
 use docopt::Docopt;
+use libc::c_int;
 
 static USAGE: &'static str = "
 Usage: cmail [options] [<args> ...]
@@ -38,7 +40,7 @@ Options:
 #[derive(Debug, Deserialize)]
 struct Args {
     arg_args: Vec<String>,
-    flag_period: u32,
+    flag_period: u64,
     flag_silent: bool,
     flag_send_all: bool,
     flag_to: Option<String>,
@@ -49,7 +51,7 @@ type Result<T> = ::std::result::Result<T, Box<Error + Send + Sync>>;
 
 fn main() {
     // We must start our signal notifier before spawning any threads!
-    let signal = notify(&[Signal::INT, Signal::TERM]);
+    let signal = signal_notify(&[libc::SIGINT, libc::SIGTERM]).unwrap();
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.options_first(true).deserialize())
         .unwrap_or_else(|e| e.exit());
@@ -71,7 +73,7 @@ fn main() {
 /// 3. Create a channel that ticks every N seconds.
 /// 4. Start the main loop which waits on three channels: OS signals, the
 ///    ticker and lines read from the spawned command (or stdin).
-fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
+fn run(args: &Args, signal: Receiver<c_int>) -> Result<i32> {
     // When we don't have any arguments, cmail sends email containing stdin.
     let (mut cmd, lines, cmd_argv) =
         if args.arg_args.is_empty() {
@@ -94,7 +96,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
     let emailer = EmailSender::run(cmd_argv, email, args.flag_send_all);
 
     // If period is zero, then ticker never ticks.
-    let ticker = chan::tick_ms(args.flag_period * 1000);
+    let ticker = channel::tick(Duration::from_secs(args.flag_period));
     // Set to true if either the spawned process or a `sendmail` command
     // is interrupted. Setting this to `true` means we've initiated a graceful
     // shutdown of cmail that will culminate in one last email send.
@@ -103,10 +105,10 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
     // then this is emptied at every tick.
     let mut outlines = Vec::with_capacity(1024);
     loop {
-        chan_select! {
+        select! {
             // Respond to an OS signal. Currently, we just listen for
             // INT (^C) and TERM (kill).
-            signal.recv() => {
+            recv(signal) => {
                 killed = true;
                 if let Some(ref mut cmd) = cmd {
                     // If we're running a command and receive an interrupt,
@@ -130,7 +132,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
             // then we take this as a sign that we should quit.
             //
             // Finally, don't respond to ticks if we're shutting down.
-            ticker.recv() => {
+            recv(ticker) => {
                 if !killed {
                     killed = emailer.send(outlines)?;
                     outlines = Vec::with_capacity(1024);
@@ -148,7 +150,7 @@ fn run(args: &Args, signal: Receiver<Signal>) -> Result<i32> {
             // N.B. This is the main exit point of cmail under normal
             // operation. In the absence of ticks, this is usually the only
             // channel that gets any activity!
-            lines.recv() -> line => match line {
+            recv(lines, line) => match line {
                 Some(line) => outlines.push(line?),
                 None => return emailer.last_send(cmd, outlines, killed),
             },
@@ -180,12 +182,12 @@ impl EmailSender {
     /// to use the methods defined below.
     fn run(cmd: String, email: String, send_all: bool) -> EmailSender {
         let mut to_send: Vec<String> = Vec::with_capacity(1024);
-        let (send_lines, recv_lines) = chan::sync::<Vec<String>>(0);
-        let (send_result, recv_result) = chan::sync(0);
-        let (send_done, recv_done) = chan::sync(1);
+        let (send_lines, recv_lines) = channel::bounded::<Vec<String>>(0);
+        let (send_result, recv_result) = channel::bounded(0);
+        let (send_done, recv_done) = channel::bounded(1);
         thread::spawn(move || {
             let mut interrupted = false;
-            for lines in recv_lines.iter() {
+            for lines in recv_lines {
                 if send_all {
                     to_send.extend(lines);
                 } else {
@@ -195,13 +197,16 @@ impl EmailSender {
                         to_send = lines;
                     }
                 }
-                let result = if interrupted {
-                    email_lines(&cmd, &email, &to_send).map(|_| interrupted)
-                } else {
-                    let r = email_lines_retry(&cmd, &email, &to_send);
-                    interrupted = *r.as_ref().unwrap_or(&false);
-                    r
-                };
+                let result =
+                    if interrupted {
+                        email_lines(
+                            &cmd, &email, &to_send,
+                        ).map(|_| interrupted)
+                    } else {
+                        let r = email_lines_retry(&cmd, &email, &to_send);
+                        interrupted = *r.as_ref().unwrap_or(&false);
+                        r
+                    };
                 send_result.send(result);
             }
             // unblock recv_done
@@ -330,11 +335,11 @@ fn muxer<T: Send + 'static>(inps: Vec<Receiver<T>>) -> Receiver<T> {
     // If a command sends a lot of output to stdout/stderr in a short time
     // period, then setting a large buffer here on the channel gives us a
     // little wiggle room to keep up with it.
-    let (s, r) = chan::sync(5000);
+    let (s, r) = channel::bounded(5000);
     for inp in inps {
         let s = s.clone();
         thread::spawn(move || {
-            for item in inp.iter() {
+            for item in inp {
                 s.send(item);
             }
         });
@@ -374,7 +379,7 @@ impl Passthru {
     /// This will also apply the pass through settings in `self`.
     fn gobble<R>(self, rdr: R) -> Receiver<io::Result<String>>
             where R: Read + Send + 'static {
-        let (s, r) = chan::sync(0);
+        let (s, r) = channel::bounded(0);
         thread::spawn(move || {
             let mut wtr = self.wtr();
             for line in io::BufReader::new(rdr).lines() {
@@ -467,4 +472,15 @@ To: {email}
             }
         })
     }
+}
+
+fn signal_notify(signals: &[c_int]) -> Result<Receiver<c_int>> {
+    let (s, r) = channel::bounded(100);
+    let signals = signal_hook::iterator::Signals::new(signals)?;
+    thread::spawn(move || {
+        for signal in signals.forever() {
+            s.send(signal);
+        }
+    });
+    Ok(r)
 }

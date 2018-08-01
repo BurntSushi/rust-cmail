@@ -10,11 +10,12 @@ keywords = ["email", "cli", "command"]
 license = "Unlicense/MIT"
 
 [dependencies]
-chan = "0.1"
-chan-signal = "0.1"
+crossbeam-channel = "0.2"
 docopt = "1"
+libc = "0.2"
 serde = "1"
 serde_derive = "1"
+signal-hook = "0.1"
 
 [[bin]]
 name = "cmail"

@@ -2,9 +2,9 @@ A command line utility for sending periodic email with the output of long
 running commands.
 
 [![Build status](https://api.travis-ci.org/BurntSushi/rust-cmail.png)](https://travis-ci.org/BurntSushi/rust-cmail)
-[![](http://meritbadge.herokuapp.com/cmail)](https://crates.io/crates/cmail)
+[![](https://meritbadge.herokuapp.com/cmail)](https://crates.io/crates/cmail)
 
-Dual-licensed under MIT or the [UNLICENSE](http://unlicense.org).
+Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org/).
 
 
 ### Installation
@@ -72,8 +72,8 @@ cmail -p 10 du -csh *
 ### Port from Go
 
 This is ported from an earlier version I wrote in Go:
-https://github.com/BurntSushi/rust-cmail
+https://github.com/BurntSushi/cmail
 
-Since this is my second run at writing this, it's a little clean this time
+Since this is my second run at writing this, it's a little cleaner this time
 around. All in all, I'm quite fond of the structure of both programs (well,
 the structure is quite similar!).

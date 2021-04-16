@@ -35,6 +35,7 @@ Options:
     -t ARG, --to ARG       The email address to send to. By default, this
                            is set to $EMAIL. If neither $EMAIL nor --to
                            are set, then an error is returned.
+    --subject ARG          Forcefully set the subject of the email.
 ";
 
 #[derive(Debug, Deserialize)]
@@ -44,10 +45,11 @@ struct Args {
     flag_silent: bool,
     flag_send_all: bool,
     flag_to: Option<String>,
+    flag_subject: Option<String>,
 }
 
 // A poor man's error type. See: http://goo.gl/BLfXQe
-type Result<T> = ::std::result::Result<T, Box<Error + Send + Sync>>;
+type Result<T> = ::std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() {
     // We must start our signal notifier before spawning any threads!
@@ -75,7 +77,7 @@ fn main() {
 ///    ticker and lines read from the spawned command (or stdin).
 fn run(args: &Args, signal: Receiver<c_int>) -> Result<i32> {
     // When we don't have any arguments, cmail sends email containing stdin.
-    let (mut cmd, lines, cmd_argv) =
+    let (mut cmd, lines, mut cmd_argv) =
         if args.arg_args.is_empty() {
             let passthru = Passthru::stdout(!args.flag_silent);
             let stdin = passthru.gobble(io::stdin());
@@ -84,6 +86,9 @@ fn run(args: &Args, signal: Receiver<c_int>) -> Result<i32> {
             let (cmd, lines) = Cmd::run(&args.arg_args, !args.flag_silent)?;
             (Some(cmd), lines, args.arg_args.join(" "))
         };
+    if let Some(ref subject) = args.flag_subject {
+        cmd_argv = subject.clone();
+    }
 
     let email = match args.flag_to {
         None => env::var("EMAIL").unwrap_or("".to_owned()),
@@ -366,7 +371,7 @@ impl Passthru {
     /// Create a writer corresponding to the pass through settings.
     ///
     /// If there's no pass through, then a /dev/null-like writer is returned.
-    fn wtr(self) -> Box<io::Write> {
+    fn wtr(self) -> Box<dyn io::Write> {
         match self {
             Passthru::No => Box::new(io::sink()),
             Passthru::Stdout => Box::new(io::stdout()),

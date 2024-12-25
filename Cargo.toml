@@ -8,15 +8,16 @@ repository = "https://github.com/BurntSushi/rust-cmail"
 readme = "README.md"
 keywords = ["email", "cli", "command"]
 license = "Unlicense/MIT"
+edition = "2021"
 
 [dependencies]
-crossbeam-channel = "0.2"
-docopt = "1"
-libc = "0.2"
-serde = "1"
-serde_derive = "1"
-signal-hook = "0.1"
+anyhow = "1.0.95"
+crossbeam-channel = "0.5.14"
+jiff = "0.1.16"
+lexopt = "0.3.0"
+libc = "0.2.169"
+signal-hook = "0.3.17"
 
 [[bin]]
 name = "cmail"
-path = "cmail.rs"
+path = "main.rs"
